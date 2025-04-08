@@ -341,6 +341,8 @@ class ObjectVcarve(PathEngraveBase.ObjectOp):
         obj.Colinear = 10.0
         obj.Discretize = 0.25
         obj.Tolerance = Path.Preferences.defaultGeometryTolerance()
+        # keep copy in local object to use in methods which do not operate directly on obj
+        self.Tolerance = obj.Tolerance
         self.setupAdditionalProperties(obj)
 
     def opOnDocumentRestored(self, obj):
@@ -352,8 +354,12 @@ class ObjectVcarve(PathEngraveBase.ObjectOp):
         constructs a medial axis path using openvoronoi
         :returns: dictionary - each face object is a key containing list of wires"""
 
-        wires_by_face = dict()
-        self.voronoiDebugCache = dict()
+        medial_wires_by_face = dict()
+        edges_by_face = dict() # non processed voronoi edges, for debugging
+
+        self.voronoiDebugMedialCache = dict()
+        self.voronoiDebugEdgeCache = dict()
+
 
         def is_exterior(vertex, face):
             vector = FreeCAD.Vector(vertex.toPoint(face.BoundBox.ZMin))
@@ -392,6 +398,7 @@ class ObjectVcarve(PathEngraveBase.ObjectOp):
             insert_many_wires(vd, f.Wires)
 
             vd.construct()
+            edges_by_face[f] = vd.Edges
 
             for e in vd.Edges:
                 if e.isPrimary():
@@ -418,10 +425,12 @@ class ObjectVcarve(PathEngraveBase.ObjectOp):
             wires = _sortVoronoiWires(wires)
             voronoiWires.extend(wires)
 
-            wires_by_face[f] = voronoiWires
-            self.voronoiDebugCache = wires_by_face
+            medial_wires_by_face[f] = voronoiWires
 
-        return wires_by_face
+        self.voronoiDebugMedialCache = medial_wires_by_face
+        self.voronoiDebugEdgeCache = edges_by_face
+
+        return medial_wires_by_face
 
     def buildCommandList(self, obj, faces):
         """
@@ -429,52 +438,137 @@ class ObjectVcarve(PathEngraveBase.ObjectOp):
         wire list from buildMedialWires
         """
 
-        def getCurrentPosition(wire):
+        def getPositionHistory(wire):
             """
-            Calculate CNC head position assuming it reached the end of the wire
+            Get CNC current and previous head position assuming it reached the end of the wire
+            returns: previousPosition, currentPostion tuple
             """
 
             if not wire:
                 return None
 
             lastEdge = wire[-1]
-            return lastEdge.valueAt(lastEdge.LastParameter)
+            return (lastEdge.valueAt(lastEdge.FirstParameter), lastEdge.valueAt(lastEdge.LastParameter))
 
         def cutWires(wires, pathlist, optimizeMovements=False):
-            currentPosition = None
+
+            positionHistory = None
+
             for w in wires:
                 pWire = _getPartEdges(obj, w, geom)
                 if pWire:
-                    pathlist.extend(_cutWire(pWire, currentPosition))
+                    pathlist.extend(_cutWire(pWire, positionHistory))
 
-                    # movement optimization only works if we provide current head position
+                    # movement optimization only works if we provide head position history
                     if optimizeMovements:
-                        currentPosition = getCurrentPosition(pWire)
+                        positionHistory = getPositionHistory(pWire)
 
-        def canSkipRepositioning(currentPosition, newPosition):
+        def getReversedEdge(edge):
+            # returns a reversed edge (copy of original edge)
+            curve = edge.Curve
+            first = edge.FirstParameter
+            last = edge.LastParameter
+            curve_c = curve.copy()
+            curve_c.reverse()
+            return Part.Edge(curve_c, curve_c.reversedParameter(last), curve_c.reversedParameter(first))
+
+
+        def canSkipRepositioning(positionHistory, newPosition):
             """
             Calculate if it makes sense to raise head to safe height and reposition before
             starting to cut another edge
             """
 
-            if not currentPosition:
+            if not positionHistory:
                 return False
+            
+            currentPosition = positionHistory[-1]
+            previousPosition = positionHistory[-2]
+            
 
             # get vertex position on X/Y plane only
             v0 = FreeCAD.Base.Vector(currentPosition.x, currentPosition.y)
             v1 = FreeCAD.Base.Vector(newPosition.x, newPosition.y)
 
-            return v0.distanceToPoint(v1) <= 0.5
+            # do not bother with G0 if new and current position differ by less than 0.5 mm in X/Y
+            if v0.distanceToPoint(v1) <= 0.5:
+                return True
+            
+            # if new position is same as previous head position we can essentially
+            # go back traversing same edge. This is handy with short "detour" edges like that:
+            #
+            #      A--------------B===============C
+            #                     |
+            #                     D
+            # so travelling wire from A -> B -> D and being at D, we don't need to raise head
+            # and G0 to B where a new wire starts
+            # we can go straight there using G1 travelling back as D -> B
 
-        def _cutWire(wire, currentPosition=None):
+            if newPosition.isEqual(previousPosition, obj.Tolerance):
+                return True
+            
+            return False
+
+
+        def _cutWire(wire, positionHistory=None):
             path = []
 
-            e = wire[0]
+            backtrack_edges = []
+
+            # we start vcarving another wire which may not be connected to previous one
+            # but using some routing logic we may avoid raising CNC toolbit and using G0
+            # and instead traverse back already carved edges at full speed
+
+            if positionHistory:
+
+                currentPosition = positionHistory[-1]
+                previousPosition = positionHistory[-2]
+
+                next_edge = wire[0]
+                next_edge_start = next_edge.valueAt(next_edge.FirstParameter)
+                next_edge_end = next_edge.valueAt(next_edge.LastParameter)
+
+                # in some cases travelling between wires looks like that: 
+                # A ========= B ------- D
+                #             |
+                #             C
+                #
+                # we follow first wire from A to B - new wire starts at C and goes through B -> D
+                # Repositioning to position C using G0 command does not make sense and it's slow
+                # We can insert "virtual" edge B->C at the beginning of a second wire to make
+                # continous CNC head movement
+                #
+
+
+                if next_edge_end.isEqual(currentPosition, obj.Tolerance):
+                    # virtual edge is "reversed"
+                    virtual_edge = Part.Edge(Part.LineSegment(next_edge_end, next_edge_start))
+                    wire.insert(0, virtual_edge)
+                elif next_edge_end.isEqual(previousPosition, obj.Tolerance):
+                    # next edge has common node with previous position but it's reversed
+                    #  A     C
+                    #   \   //
+                    #    \ //
+                    #     B
+                    # We went from B to C and next wire edge starts at A and goes back to B
+                    # Normally we would G0 jump from C to A and start from there, 
+                    # but if we reverse the A->B edge direction 
+                    # we can go back from C to B and then travel B->A edge without interruption
+
+                    # reverse edge
+                    #next_edge.reverse()
+                    # travel back to the previous toolbit position
+                    virtual_edge = Part.Edge(Part.LineSegment(currentPosition, previousPosition))
+                    backtrack_edges.append(virtual_edge)
+                    backtrack_edges.append(getReversedEdge(next_edge))
+
+            edge_list = backtrack_edges + wire
+
+            e = edge_list[0]
             newPosition = e.valueAt(e.FirstParameter)
 
-            # raise and reposition the head only if new wire starts further than 0.5 mm
-            # from current head position
-            if not canSkipRepositioning(currentPosition, newPosition):
+            # check if we can smart-skip using G0 repositioning which is slow
+            if not canSkipRepositioning(positionHistory, newPosition):
                 path.append(Path.Command("G0 Z{}".format(obj.SafeHeight.Value)))
                 path.append(
                     Path.Command(
@@ -489,7 +583,8 @@ class ObjectVcarve(PathEngraveBase.ObjectOp):
                     "G1 X{} Y{} Z{} F{}".format(newPosition.x, newPosition.y, newPosition.z, vSpeed)
                 )
             )
-            for e in wire:
+
+            for e in edge_list:
                 path.extend(Path.Geom.cmdsForEdge(e, hSpeed=hSpeed, vSpeed=vSpeed))
 
             return path
@@ -534,7 +629,9 @@ class ObjectVcarve(PathEngraveBase.ObjectOp):
         """opExecute(obj) ... process engraving operation"""
         Path.Log.track()
 
-        self.voronoiDebugCache = None
+        self.voronoiDebugMedialCache = None
+        self.voronoiDebugEdgesCache = None
+
 
         if obj.ToolController is None:
             return
@@ -614,20 +711,20 @@ class ObjectVcarve(PathEngraveBase.ObjectOp):
             and hasattr(tool, "TipDiameter")
         )
 
-    def debugVoronoi(self, obj):
-        """Debug function to display calculated voronoi edges"""
+    def debugVoronoiMedial(self, obj):
+        """Debug function to display calculated voronoi medial wires"""
 
-        if not getattr(self, "voronoiDebugCache", None):
+        if not getattr(self, "voronoiDebugMedialCache", None):
             Path.Log.error("debugVoronoi: empty debug cache. Recompute VCarve operation first")
             return
 
-        vPart = FreeCAD.activeDocument().addObject("App::Part", f"{obj.Name}-VoronoiDebug")
+        vPart = FreeCAD.activeDocument().addObject("App::Part", f"{obj.Name}-VoronoiDebugMedial")
+
 
         wiresToShow = []
 
-        for face, wires in self.voronoiDebugCache.items():
+        for face, wires in self.voronoiDebugMedialCache.items():
             for wire in wires:
-                lastEdge = None
                 currentPartWire = Part.Wire()
                 currentPartWire.fixTolerance(0.01)
                 for edge in wire:
@@ -641,6 +738,26 @@ class ObjectVcarve(PathEngraveBase.ObjectOp):
 
         for w in wiresToShow:
             vPart.addObject(Part.show(w))
+
+    def debugVoronoiEdges(self, obj):
+        """Debug function to display calculated voronoi edges"""
+
+        if not getattr(self, "voronoiDebugEdgeCache", None):
+            Path.Log.error("debugVoronoi: empty debug cache. Recompute VCarve operation first")
+            return
+
+        vPart = FreeCAD.activeDocument().addObject("App::Part", f"{obj.Name}-VoronoiDebugEdge")
+
+        edgesToShow = []
+
+        for face, edges in self.voronoiDebugEdgeCache.items():
+            for edge in edges: # those are voronoi Edge objects, not FC Edge
+                currentEdge = edge.toShape()
+
+                edgesToShow.append(currentEdge)
+
+        for e in edgesToShow:
+            vPart.addObject(Part.show(e))
 
 
 def SetupProperties():
