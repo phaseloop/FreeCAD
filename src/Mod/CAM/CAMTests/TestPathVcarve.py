@@ -175,3 +175,15 @@ class TestPathVcarve(PathTestBase):
         self.assertRoughly(geom.stop, -4)
         self.assertRoughly(geom.scale, 1)
         self.assertRoughly(geom.maximumDepth, -4)
+
+    def test17(self):
+        """Verify if canSkipRepositioning allows to skip if new point is < 0.5 mm"""
+
+        positionHistory = [
+            FreeCAD.Base.Vector(0,0,0), # previous position
+            FreeCAD.Base.Vector(0,1,5)  # current position
+        ]
+
+        newPosition = FreeCAD.Base.Vector(0, 1.4 ,3)
+
+        assert PathVcarve.canSkipRepositioning(positionHistory, newPosition, 0.01)

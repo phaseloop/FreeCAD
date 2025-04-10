@@ -146,6 +146,41 @@ def _sortVoronoiWires(wires, start=FreeCAD.Vector(0, 0, 0)):
 
     return result
 
+def canSkipRepositioning(positionHistory, newPosition, tolerance):
+    """
+    Calculate if it makes sense to raise head to safe height and reposition before
+    starting to cut another edge
+    """
+
+    if not positionHistory:
+        return False
+    
+    currentPosition = positionHistory[-1]
+    previousPosition = positionHistory[-2]
+    
+
+    # get vertex position on X/Y plane only
+    v0 = FreeCAD.Base.Vector(currentPosition.x, currentPosition.y)
+    v1 = FreeCAD.Base.Vector(newPosition.x, newPosition.y)
+
+    # do not bother with G0 if new and current position differ by less than 0.5 mm in X/Y
+    if v0.distanceToPoint(v1) <= 0.5:
+        return True
+    
+    # if new position is same as previous head position we can essentially
+    # go back traversing same edge. This is handy with short "detour" edges like that:
+    #
+    #      A--------------B===============C
+    #                     |
+    #                     D
+    # so travelling wire from A -> B -> D and being at D, we don't need to raise head
+    # and G0 to B where a new wire starts
+    # we can go straight there using G1 travelling back as D -> B
+
+    if newPosition.isEqual(previousPosition, tolerance):
+        return True
+    
+    return False
 
 class _Geometry(object):
     """POD class so the limits only have to be calculated once."""
@@ -473,43 +508,6 @@ class ObjectVcarve(PathEngraveBase.ObjectOp):
             return Part.Edge(curve_c, curve_c.reversedParameter(last), curve_c.reversedParameter(first))
 
 
-        def canSkipRepositioning(positionHistory, newPosition):
-            """
-            Calculate if it makes sense to raise head to safe height and reposition before
-            starting to cut another edge
-            """
-
-            if not positionHistory:
-                return False
-            
-            currentPosition = positionHistory[-1]
-            previousPosition = positionHistory[-2]
-            
-
-            # get vertex position on X/Y plane only
-            v0 = FreeCAD.Base.Vector(currentPosition.x, currentPosition.y)
-            v1 = FreeCAD.Base.Vector(newPosition.x, newPosition.y)
-
-            # do not bother with G0 if new and current position differ by less than 0.5 mm in X/Y
-            if v0.distanceToPoint(v1) <= 0.5:
-                return True
-            
-            # if new position is same as previous head position we can essentially
-            # go back traversing same edge. This is handy with short "detour" edges like that:
-            #
-            #      A--------------B===============C
-            #                     |
-            #                     D
-            # so travelling wire from A -> B -> D and being at D, we don't need to raise head
-            # and G0 to B where a new wire starts
-            # we can go straight there using G1 travelling back as D -> B
-
-            if newPosition.isEqual(previousPosition, obj.Tolerance):
-                return True
-            
-            return False
-
-
         def _cutWire(wire, positionHistory=None):
             path = []
 
@@ -568,7 +566,7 @@ class ObjectVcarve(PathEngraveBase.ObjectOp):
             newPosition = e.valueAt(e.FirstParameter)
 
             # check if we can smart-skip using G0 repositioning which is slow
-            if not canSkipRepositioning(positionHistory, newPosition):
+            if not canSkipRepositioning(positionHistory, newPosition, obj.Tolerance):
                 path.append(Path.Command("G0 Z{}".format(obj.SafeHeight.Value)))
                 path.append(
                     Path.Command(
