@@ -553,17 +553,19 @@ class ObjectVcarve(PathEngraveBase.ObjectOp):
                     # but if we reverse the A->B edge direction 
                     # we can go back from C to B and then travel B->A edge without interruption
 
-                    # reverse edge
-                    #next_edge.reverse()
                     # travel back to the previous toolbit position
                     virtual_edge = Part.Edge(Part.LineSegment(currentPosition, previousPosition))
                     backtrack_edges.append(virtual_edge)
+                    # instead of G0 - just carve the edge in reverse direction
                     backtrack_edges.append(getReversedEdge(next_edge))
 
             edge_list = backtrack_edges + wire
 
             e = edge_list[0]
             newPosition = e.valueAt(e.FirstParameter)
+
+            hSpeed = obj.ToolController.HorizFeed.Value
+            vSpeed = obj.ToolController.VertFeed.Value
 
             # check if we can smart-skip using G0 repositioning which is slow
             if not canSkipRepositioning(positionHistory, newPosition, obj.Tolerance):
@@ -574,13 +576,20 @@ class ObjectVcarve(PathEngraveBase.ObjectOp):
                     )
                 )
 
-            hSpeed = obj.ToolController.HorizFeed.Value
-            vSpeed = obj.ToolController.VertFeed.Value
-            path.append(
+                path.append(
                 Path.Command(
                     "G1 X{} Y{} Z{} F{}".format(newPosition.x, newPosition.y, newPosition.z, vSpeed)
                 )
             )
+            else:
+                # technically hSpeed + vSpeed should be properly recalculated into F parameter
+                # as cmdsForEdge does but we either cut max 0.5 mm through stock or backtrack
+                # over already carved edges, so hSpeed will be just fine
+                path.append(
+                    Path.Command(
+                        "G1 X{} Y{} Z{} F{}".format(newPosition.x, newPosition.y, newPosition.z, hSpeed)
+                    )
+                )
 
             for e in edge_list:
                 path.extend(Path.Geom.cmdsForEdge(e, hSpeed=hSpeed, vSpeed=vSpeed))

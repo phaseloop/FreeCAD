@@ -184,6 +184,8 @@ class TestPathVcarve(PathTestBase):
             FreeCAD.Base.Vector(0,1,5)  # current position
         ]
 
-        newPosition = FreeCAD.Base.Vector(0, 1.4 ,3)
-
+        newPosition = FreeCAD.Base.Vector(0, 1.4, 3)
         assert PathVcarve.canSkipRepositioning(positionHistory, newPosition, 0.01)
+
+        newPosition = FreeCAD.Base.Vector(0, 1.7, 3)
+        assert not PathVcarve.canSkipRepositioning(positionHistory, newPosition, 0.01)
