@@ -566,8 +566,9 @@ class ObjectVcarve(PathEngraveBase.ObjectOp):
                 clearance_height=obj.ClearanceHeight.Value,
                 safe_height=obj.SafeHeight.Value,
                 start_depth=geom.start,
-                step_down=obj.stepDown,
+                step_down=geom.stepDown,
                 final_depth=geom.stop,
+                z_finish_step=0,
                 user_depths=None,
             )]
 
@@ -583,16 +584,16 @@ class ObjectVcarve(PathEngraveBase.ObjectOp):
             cutDepth = abs(geom.start - geom.stop)
             areaParams["ToolRadius"] = PathUtils.getToolRadiusAtDepth(obj.ToolController.Tool, cutDepth)
 
-            Path.log.info(f"tool radius at depth {cutDepth}: {areaParams['ToolRadius']}")
+            Path.Log.info(f"tool radius at depth {cutDepth}: {areaParams['ToolRadius']}")
 
             areaParams["PocketMode"] = 1
 
-            sections = area.makeSections(mode=0, project=self.areaOpUseProjection(obj), heights=heights)
+            sections = area.makeSections(mode=0, project=True, heights=heights)
 
             shapelist = [sec.getShape() for sec in sections]
 
             pathParams = {}
-            pathParams["shapes"] = [shapelist]
+            pathParams["shapes"] = shapelist
             pathParams["feedrate"] = obj.ToolController.HorizFeed.Value
             pathParams["feedrate_v"] = obj.ToolController.VertFeed.Value
             pathParams["verbose"] = True
