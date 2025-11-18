@@ -291,7 +291,9 @@ class ObjectVcarve(PathEngraveBase.ObjectOp):
                 "App::PropertyLinkList",
                 "BaseShapes",
                 "Path",
-                QT_TRANSLATE_NOOP("App::Property", "Additional base objects to be engraved"),
+                QT_TRANSLATE_NOOP(
+                    "App::Property", "Additional base objects to be engraved"
+                ),
             )
         obj.setEditorMode("BaseShapes", 2)  # hide
 
@@ -330,7 +332,9 @@ class ObjectVcarve(PathEngraveBase.ObjectOp):
             "App::PropertyFloat",
             "Discretize",
             "Path",
-            QT_TRANSLATE_NOOP("App::Property", "The deflection value for discretizing arcs"),
+            QT_TRANSLATE_NOOP(
+                "App::Property", "The deflection value for discretizing arcs"
+            ),
         )
         obj.addProperty(
             "App::PropertyFloat",
@@ -389,7 +393,9 @@ class ObjectVcarve(PathEngraveBase.ObjectOp):
                     dist = ptv[-1].distanceToPoint(ptv[0])
                     if dist < FreeCAD.Base.Precision.confusion():
                         Path.Log.debug(
-                            "Removing bad carve point: {} from polygon origin".format(dist)
+                            "Removing bad carve point: {} from polygon origin".format(
+                                dist
+                            )
                         )
                         del ptv[-1]
                 ptv.append(ptv[0])
@@ -489,7 +495,12 @@ class ObjectVcarve(PathEngraveBase.ObjectOp):
                 path.append(Path.Command("G0", {"Z": obj.SafeHeight.Value}))
                 path.append(
                     Path.Command(
-                        "G0", {"X": newPosition.x, "Y": newPosition.y, "Z": obj.SafeHeight.Value}
+                        "G0",
+                        {
+                            "X": newPosition.x,
+                            "Y": newPosition.y,
+                            "Z": obj.SafeHeight.Value,
+                        },
                     )
                 )
 
@@ -497,7 +508,13 @@ class ObjectVcarve(PathEngraveBase.ObjectOp):
             vSpeed = obj.ToolController.VertFeed.Value
             path.append(
                 Path.Command(
-                    "G1", {"X": newPosition.x, "Y": newPosition.y, "Z": newPosition.z, "F": vSpeed}
+                    "G1",
+                    {
+                        "X": newPosition.x,
+                        "Y": newPosition.y,
+                        "Z": newPosition.z,
+                        "F": vSpeed,
+                    },
                 )
             )
             for e in wire:
@@ -523,7 +540,9 @@ class ObjectVcarve(PathEngraveBase.ObjectOp):
                 _maximumUsableDepth = _get_maximumUsableDepth(wires, geom)
                 if _maximumUsableDepth is not None:
                     maximumUsableDepth = _maximumUsableDepth
-                    Path.Log.debug(f"Maximum usable depth for current face: {maximumUsableDepth}")
+                    Path.Log.debug(
+                        f"Maximum usable depth for current face: {maximumUsableDepth}"
+                    )
 
             # first pass
             cutWires(wires, pathlist, obj.OptimizeMovements)
@@ -538,6 +557,51 @@ class ObjectVcarve(PathEngraveBase.ObjectOp):
                 geom.offset = obj.FinishingPassZOffset.Value
 
                 cutWires(wires, pathlist, obj.OptimizeMovements)
+
+            # flat depth machining
+
+            area = Path.Area()
+            area.add(face)
+            heights = [ i for i in PathUtils.depth_params(
+                clearance_height=obj.ClearanceHeight.Value,
+                safe_height=obj.SafeHeight.Value,
+                start_depth=geom.start,
+                step_down=obj.stepDown,
+                final_depth=geom.stop,
+                user_depths=None,
+            )]
+
+            areaParams = {}
+            areaParams["SectionTolerance"] = FreeCAD.Base.Precision.confusion() * 10  # basically 1e-06
+            areaParams["Fill"] = 0
+            areaParams["Coplanar"] = 0
+            areaParams["PocketMode"] = 1
+            areaParams["SectionCount"] = -1
+            areaParams["Angle"] = 60
+            areaParams["FromCenter"] = True
+            areaParams["PocketStepover"] = 0.5
+            cutDepth = abs(geom.start - geom.stop)
+            areaParams["ToolRadius"] = PathUtils.getToolRadiusAtDepth(obj.ToolController.Tool, cutDepth)
+
+            Path.log.info(f"tool radius at depth {cutDepth}: {areaParams['ToolRadius']}")
+
+            areaParams["PocketMode"] = 1
+
+            sections = area.makeSections(mode=0, project=self.areaOpUseProjection(obj), heights=heights)
+
+            shapelist = [sec.getShape() for sec in sections]
+
+            pathParams = {}
+            pathParams["shapes"] = [shapelist]
+            pathParams["feedrate"] = obj.ToolController.HorizFeed.Value
+            pathParams["feedrate_v"] = obj.ToolController.VertFeed.Value
+            pathParams["verbose"] = True
+            pathParams["resume_height"] = obj.SafeHeight.Value
+            pathParams["retraction"] = obj.ClearanceHeight.Value
+            pathParams["return_end"] = True
+
+            (pp, end_vector) = Path.fromShapes(**pathParams)
+            print(pp.Commands)
 
         self.commandlist = pathlist
 
@@ -561,7 +625,9 @@ class ObjectVcarve(PathEngraveBase.ObjectOp):
 
         if obj.ToolController.Tool.CuttingEdgeAngle >= 180.0:
             Path.Log.info(
-                translate("CAM_Vcarve", "Engraver cutting edge angle must be < 180 degrees.")
+                translate(
+                    "CAM_Vcarve", "Engraver cutting edge angle must be < 180 degrees."
+                )
             )
             return
 
@@ -579,9 +645,9 @@ class ObjectVcarve(PathEngraveBase.ObjectOp):
 
             if not faces:
                 for model in self.model:
-                    if model.isDerivedFrom("Sketcher::SketchObject") or model.isDerivedFrom(
-                        "Part::Part2DObject"
-                    ):
+                    if model.isDerivedFrom(
+                        "Sketcher::SketchObject"
+                    ) or model.isDerivedFrom("Part::Part2DObject"):
                         faces.extend(model.Shape.Faces)
 
             if faces:
@@ -629,10 +695,14 @@ class ObjectVcarve(PathEngraveBase.ObjectOp):
         """Debug function to display calculated voronoi edges"""
 
         if not getattr(self, "voronoiDebugCache", None):
-            Path.Log.error("debugVoronoi: empty debug cache. Recompute VCarve operation first")
+            Path.Log.error(
+                "debugVoronoi: empty debug cache. Recompute VCarve operation first"
+            )
             return
 
-        vPart = FreeCAD.activeDocument().addObject("App::Part", f"{obj.Name}-VoronoiDebug")
+        vPart = FreeCAD.activeDocument().addObject(
+            "App::Part", f"{obj.Name}-VoronoiDebug"
+        )
 
         wiresToShow = []
 

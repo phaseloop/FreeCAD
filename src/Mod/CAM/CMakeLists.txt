@@ -546,7 +546,8 @@ SET(Tests_SRCS
     CAMTests/TestPathToolLibrarySerializer.py
     CAMTests/TestPathToolMachine.py
     CAMTests/TestPathToolController.py
-    CAMTests/TestPathUtil.py
+    CAMTests/TestPathBaseUtil.py
+     CAMTests/TestPathUtils.py
     CAMTests/TestPathVcarve.py
     CAMTests/TestPathVoronoi.py
     CAMTests/TestRefactoredCentroidPost.py

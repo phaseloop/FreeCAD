@@ -26,6 +26,7 @@ import FreeCAD
 import Path
 import Path.Op.Area as PathAreaOp
 import Path.Op.Base as PathOp
+from PathScripts import PathUtils
 
 from PySide.QtCore import QT_TRANSLATE_NOOP
 
@@ -225,6 +226,24 @@ class ObjectPocket(PathAreaOp.ObjectOp):
             extraOffset = 0 - extraOffset
         params["PocketExtraOffset"] = extraOffset
         params["ToolRadius"] = self.radius
+
+        # special case for v-bit or conical bits - we calculate bit diameter at maximum
+        # depth and pass that as ToolRadius to Area operation
+        tc = obj.ToolController
+        if tc is None or tc.ToolNumber == 0 or not hasattr(tc.Tool, "CuttingEdgeAngle"):
+            pass
+        else:
+            cutDepth = abs(obj.StartDepth.Value - obj.FinalDepth.Value)
+            toolRadius = PathUtils.getToolRadiusAtDepth(tc.Tool, cutDepth)
+
+            Path.log.info(
+                "Conical or V-bit toolbit detected. Using dynamically calculated tool radius "
+                f"{toolRadius} mm at cut depth {cutDepth} mm"
+                )
+            
+            params["ToolRadius"] = toolRadius
+
+
         params["PocketLastStepover"] = obj.PocketLastStepOver
 
         Pattern = {

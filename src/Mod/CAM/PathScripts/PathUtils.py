@@ -104,7 +104,9 @@ def loopdetect(obj, edge1, edge2):
                 candidates.append((wire.hashCode(), wire))
             if e.hashCode() == edge2.hashCode():
                 candidates.append((wire.hashCode(), wire))
-    loop = set([x for x in candidates if candidates.count(x) > 1])  # return the duplicate item
+    loop = set(
+        [x for x in candidates if candidates.count(x) > 1]
+    )  # return the duplicate item
     if len(loop) != 1:
         return None
     loopwire = next(x for x in loop)[1]
@@ -125,7 +127,9 @@ def horizontalEdgeLoop(obj, edge, verbose=False):
     ehash = edge.hashCode()
     wires = [w for w in obj.Shape.Wires if any(e.hashCode() == ehash for e in w.Edges)]
     loops = [
-        w for w in wires if all(isHorizontal(e) for e in w.Edges) and isHorizontal(Part.Face(w))
+        w
+        for w in wires
+        if all(isHorizontal(e) for e in w.Edges) and isHorizontal(Part.Face(w))
     ]
     if len(loops) > 0:
         return loops[0].Edges
@@ -204,7 +208,8 @@ def tangentEdgeLoop(obj, edge):
 
 def horizontalFaceLoop(obj, face, faceList=None):
     """horizontalFaceLoop(obj, face, faceList=None) ... returns a list of face names which form the walls of a vertical hole face is a part of.
-    All face names listed in faceList must be part of the hole for the solution to be returned."""
+    All face names listed in faceList must be part of the hole for the solution to be returned.
+    """
 
     isVertical = Path.Geom.isVertical
     isRoughly = Path.Geom.isRoughly
@@ -286,13 +291,16 @@ def filterArcs(arcEdge):
         else:
             arcstpt = arcEdge.valueAt(arcEdge.FirstParameter)
             arcmid = arcEdge.valueAt(
-                (arcEdge.LastParameter - arcEdge.FirstParameter) * 0.5 + arcEdge.FirstParameter
+                (arcEdge.LastParameter - arcEdge.FirstParameter) * 0.5
+                + arcEdge.FirstParameter
             )
             arcquad1 = arcEdge.valueAt(
-                (arcEdge.LastParameter - arcEdge.FirstParameter) * 0.25 + arcEdge.FirstParameter
+                (arcEdge.LastParameter - arcEdge.FirstParameter) * 0.25
+                + arcEdge.FirstParameter
             )  # future midpt for arc1
             arcquad2 = arcEdge.valueAt(
-                (arcEdge.LastParameter - arcEdge.FirstParameter) * 0.75 + arcEdge.FirstParameter
+                (arcEdge.LastParameter - arcEdge.FirstParameter) * 0.75
+                + arcEdge.FirstParameter
             )  # future midpt for arc2
             arcendpt = arcEdge.valueAt(arcEdge.LastParameter)
             # reconstruct with 2 arcs
@@ -425,11 +433,16 @@ def getOffsetArea(
 def reverseEdge(e):
     if DraftGeomUtils.geomType(e) == "Circle":
         arcstpt = e.valueAt(e.FirstParameter)
-        arcmid = e.valueAt((e.LastParameter - e.FirstParameter) * 0.5 + e.FirstParameter)
+        arcmid = e.valueAt(
+            (e.LastParameter - e.FirstParameter) * 0.5 + e.FirstParameter
+        )
         arcendpt = e.valueAt(e.LastParameter)
         arcofCirc = Part.ArcOfCircle(arcendpt, arcmid, arcstpt)
         newedge = arcofCirc.toShape()
-    elif DraftGeomUtils.geomType(e) == "LineSegment" or DraftGeomUtils.geomType(e) == "Line":
+    elif (
+        DraftGeomUtils.geomType(e) == "LineSegment"
+        or DraftGeomUtils.geomType(e) == "Line"
+    ):
         stpt = e.valueAt(e.FirstParameter)
         endpt = e.valueAt(e.LastParameter)
         newedge = Part.makeLine(endpt, stpt)
@@ -458,6 +471,34 @@ def getToolShapeName(tool):
     if hasattr(tool, "ShapeType"):
         return tool.ShapeType.lower()
     return ""
+
+
+def getToolRadiusAtDepth(tool, depth):
+    """
+    Get tool radius at given depth.
+    This makes only sense for v-bit shaped tools. If tool is not a v-bit,
+    return "regular" diameter.
+    Depth is relative from start of a cut (or tip of a tool).
+    """
+
+    if not hasattr(tool, "CuttingEdgeAngle") or tool.CuttingEdgeAngle >= 180.0:
+        return tool.Diameter
+
+    if not hasattr(tool, "TipDiameter"):
+        rMin = 0
+    else:
+        rMin = float(tool.TipDiameter) / 2.0
+
+    rMax = float(tool.Diameter) / 2.0
+
+    toolangle = math.tan(math.radians(tool.CuttingEdgeAngle.Value / 2.0))
+
+    radius = depth * toolangle
+
+    if radius < rMin:
+       return rMin
+
+    return min(rMax, radius)
 
 
 def findToolController(obj, proxy, name=None):
@@ -628,7 +669,9 @@ def guessDepths(objshape, subs=None):
         elif fbb.ZMax == fbb.ZMin and fbb.ZMax > bb.ZMin:  # face/shelf
             final = fbb.ZMin
 
-    return depth_params(clearance, safe, start, 1.0, 0.0, final, user_depths=None, equalstep=False)
+    return depth_params(
+        clearance, safe, start, 1.0, 0.0, final, user_depths=None, equalstep=False
+    )
 
 
 def drillTipLength(tool):
@@ -642,7 +685,8 @@ def drillTipLength(tool):
 
     if angle <= 0 or angle >= 180:
         Path.Log.error(
-            translate("Path", "Invalid Cutting Edge Angle %.2f, must be >0° and <=180°") % angle
+            translate("Path", "Invalid Cutting Edge Angle %.2f, must be >0° and <=180°")
+            % angle
         )
         return 0.0
 
@@ -651,7 +695,9 @@ def drillTipLength(tool):
 
     if length < 0:
         Path.Log.error(
-            translate("Path", "Cutting Edge Angle (%.2f) results in negative tool tip length")
+            translate(
+                "Path", "Cutting Edge Angle (%.2f) results in negative tool tip length"
+            )
             % angle
         )
         return 0.0
@@ -794,9 +840,13 @@ class depth_params(object):
                 return depths
 
         if equalstep:
-            depths += self.__equal_steps(self.__start_depth, depths[-1], self.__step_down)[1:]
+            depths += self.__equal_steps(
+                self.__start_depth, depths[-1], self.__step_down
+            )[1:]
         else:
-            depths += self.__fixed_steps(self.__start_depth, depths[-1], self.__step_down)[1:]
+            depths += self.__fixed_steps(
+                self.__start_depth, depths[-1], self.__step_down
+            )[1:]
 
         depths.reverse()
 
@@ -970,7 +1020,11 @@ def applyPlacementToPath(placement, path):
     transC0 = tparams.get("C", 0)
 
     for cmd in path.Commands:
-        if (cmd.Name in CmdMoveRapid) or (cmd.Name in CmdMove) or (cmd.Name in CmdDrill):
+        if (
+            (cmd.Name in CmdMoveRapid)
+            or (cmd.Name in CmdMove)
+            or (cmd.Name in CmdDrill)
+        ):
             params = cmd.Parameters
             currX = x = params.get("X", currX)
             currY = y = params.get("Y", currY)
