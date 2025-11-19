@@ -395,6 +395,24 @@ class ObjectOp(PathOp.ObjectOp):
         instead."""
         Path.Log.track()
 
+
+        # special case for v-bit or conical bits - we calculate bit diameter at maximum
+        # depth and replace operation's radius 
+        tc = obj.ToolController
+        if tc is None or tc.ToolNumber == 0 or not hasattr(tc.Tool, "CuttingEdgeAngle"):
+            pass
+        else:
+            cutDepth = abs(obj.StartDepth.Value - obj.FinalDepth.Value)
+            toolRadius = PathUtils.getToolRadiusAtDepth(tc.Tool, cutDepth)
+
+            Path.Log.info(
+                "Conical or V-bit toolbit detected. Using dynamically calculated tool radius "
+                f"{toolRadius} mm at cut depth {cutDepth} mm"
+                )
+            
+            self.radius = toolRadius
+            
+
         # Instantiate class variables for operation reference
         self.endVector = None
         self.leadIn = 2.0
