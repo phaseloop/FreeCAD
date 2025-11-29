@@ -527,6 +527,12 @@ class ObjectVcarve(PathEngraveBase.ObjectOp):
 
         geom = _Geometry.FromObj(obj, self.model[0])
 
+        if geom.stop > obj.FinalDepth.Value:
+            Path.Log.warning(
+                f"Final depth exceeds maximum depth calculated from tool angle and diameter. "
+                f"Final v-carving depth will be limited to {geom.stop} mm."
+            )
+
         # iterate over each face separately
         for face, wires in self.buildMedialWires(obj, faces).items():
 
@@ -559,19 +565,47 @@ class ObjectVcarve(PathEngraveBase.ObjectOp):
                 cutWires(wires, pathlist, obj.OptimizeMovements)
 
             # flat depth machining
+            # on flat depth machining we ignore geom.stop limitations
+            # because we are clearing material all the way down and are not constrained by
+            # Maximum Inscribed Circle
+            cutDepth = abs(geom.start - obj.FinalDepth.Value)
+            toolRadius = PathUtils.getToolRadiusAtDepth(obj.ToolController.Tool, cutDepth)
 
             area = Path.Area()
-            area.add(face)
+            area.setPlane(PathUtils.makeWorkplane(face))
+            # move face to the bottom of the cut
+
+            # Move face to final depth less buffer before extrusion
+            # Small negative buffer is applied to compensate for internal significant digits/rounding issue
+            if self.job.GeometryTolerance.Value == 0.0:
+                buffer = 0.000001
+            else:
+                buffer = self.job.GeometryTolerance.Value / 10.0
+            # copy face just in case so we don't intefere with other operations
+            faceCopy = face.copy()
+
+            faceCopy.translate(
+                    FreeCAD.Vector(0.0, 0.0, obj.FinalDepth.Value - face.BoundBox.ZMin - buffer)
+                )
+
+            Path.Log.info(f"FinalDepth: {obj.FinalDepth.Value}")
+            Path.Log.info(f"ZMin: {face.BoundBox.ZMin}")
+            
+            # Area pocketing needs extruded solid as feature to mill-down
+            # so we need to extrude the face 
+            extrudedFace = faceCopy.extrude(FreeCAD.Vector(0.0, 0.0, cutDepth+buffer))
+            area.add(extrudedFace)
+
             heights = [ i for i in PathUtils.depth_params(
                 clearance_height=obj.ClearanceHeight.Value,
                 safe_height=obj.SafeHeight.Value,
                 start_depth=geom.start,
                 step_down=geom.stepDown,
-                final_depth=geom.stop,
-                z_finish_step=0,
+                final_depth=obj.FinalDepth.Value,
+                z_finish_step=0.0,
                 user_depths=None,
             )]
-
+        
             areaParams = {}
             areaParams["SectionTolerance"] = FreeCAD.Base.Precision.confusion() * 10  # basically 1e-06
             areaParams["Fill"] = 0
@@ -581,16 +615,18 @@ class ObjectVcarve(PathEngraveBase.ObjectOp):
             areaParams["Angle"] = 60
             areaParams["FromCenter"] = True
             areaParams["PocketStepover"] = 0.5
-            cutDepth = abs(geom.start - geom.stop)
-            areaParams["ToolRadius"] = PathUtils.getToolRadiusAtDepth(obj.ToolController.Tool, cutDepth)
+            areaParams["FromCenter"] = True
+            areaParams["ToolRadius"] = toolRadius
 
-            Path.Log.info(f"tool radius at depth {cutDepth}: {areaParams['ToolRadius']}")
+            Path.Log.info(f"Flat depth: tool radius at depth {cutDepth}: {areaParams['ToolRadius']}")
 
             areaParams["PocketMode"] = 1
-
+            area.setParams(**areaParams)
             sections = area.makeSections(mode=0, project=True, heights=heights)
 
             shapelist = [sec.getShape() for sec in sections]
+
+            self.shapelist = shapelist
 
             pathParams = {}
             pathParams["shapes"] = shapelist
@@ -602,7 +638,7 @@ class ObjectVcarve(PathEngraveBase.ObjectOp):
             pathParams["return_end"] = True
 
             (pp, end_vector) = Path.fromShapes(**pathParams)
-            print(pp.Commands)
+            pathlist.extend(pp.Commands)
 
         self.commandlist = pathlist
 
